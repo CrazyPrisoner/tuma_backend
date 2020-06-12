@@ -3,6 +3,9 @@
 from flask import Flask, jsonify, request, jsonify, render_template, redirect
 from flask_mail import Mail, Message
 import hashlib
+import json
+from bson import json_util
+from bson.json_util import dumps
 from flask_pymongo import PyMongo 
 from bson.objectid import ObjectId 
 from datetime import datetime 
@@ -32,7 +35,7 @@ CORS(app)
 
 def send_mail_smtp(recipient, name, link):
     msg = Message(subject="Confirm your email", sender=app.config['MAIL_DEFAULT_SENDER'], recipients = [recipient])
-    msg.html = render_template('form.html', name=name)
+    msg.html = render_template('form.html', name=name, link=link)
     mail.send(msg)
     result = jsonify({'mail' : 'send'})
     
@@ -41,23 +44,37 @@ def send_mail_smtp(recipient, name, link):
 # Users
 @app.route('/user/register', methods=['POST'])
 def register():
-    users = mongo.db.users 
-    data = request.get_json()
-    if (data['email'] == users.find_one({'email' : data['email']})):
-        result = jsonify({'ERROR' : 'this email already in use'})
-    else:
-        data['password'] = bcrypt.generate_password_hash(request.get_json()['password']).decode('utf-8')
-        data['created'] = datetime.utcnow()
-        data['active'] = False
-        data['admin'] = False
-        data['edited'] = None
-        user_id = users.insert({data})
-        new_user = users.find_one({'_id': user_id})
-        link = "192.168.1.2:5000/" + hashlib.md5(new_user['email'].encode())
-        result_smtp = send_mail_smtp(recipient = new_user['email'], name = new_user['name'], link=link)
-        result = jsonify({'email': new_user['email'] + ' registered'})
-        
-        return result
+    users = mongo.db.users
+    last_user = users.find().count()
+    data = request.json
+    #if (users.find().sort({'email' : data['email']})):
+    #    result = jsonify({'ERROR' : 'this email already in use'})
+    #else:
+    data['_id'] = int(last_user) + 1
+    data['password'] = bcrypt.generate_password_hash(request.get_json()['password']).decode('utf-8')
+    data['created'] = datetime.utcnow()
+    data['active'] = False
+    data['admin'] = False
+    data['edited'] = None
+    all_users = users.find().count()
+    data = json.dumps(data, default=json_util.default)
+    user_id = users.insert({      
+        '_id' : all_users + 1,
+        'name': data['name'],
+        'email': data['email'],
+        'pjone': data['pyhone'],
+        'password': 'Data[password]',
+        'active' : False,
+        'admin' : False
+
+    })
+
+    new_user = users.find_one({'_id': user_id})
+    link = "192.168.1.2:5000/" + hashlib.md5(new_user['email'].encode())
+    result_smtp = send_mail_smtp(recipient = new_user['email'], name = new_user['name'], link=link)
+    result = jsonify({'email': new_user['email'] + ' registered'})
+    
+    return result
 
 @app.route('/user/login', methods=['POST'])
 def login():
@@ -101,7 +118,7 @@ def edit_user():
     users = mongo.db.users
     data = request.get_json()
     user = users.find_one({'email': data['email']})
-    if (id > users.find().count() or id == 0):
+    if (id == 0 or users.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'user' : 'not found'})
     elif ("OldPassword" in data):
         if (bcrypt.check_password_hash(user['password'], data['OldPassword'])):
@@ -157,7 +174,7 @@ def get_all_categories():
 def get_one_category(id):
     category = mongo.db.category
     all_categories_count = category.find().count()
-    if (id > all_categories_count or id == 0):
+    if (id == 0 or category.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'category' : 'ERROR'})
     else:
         category_item = category.find_one({'_id' : id})
@@ -169,7 +186,7 @@ def get_one_category(id):
 def edit_category(id):
     category = mongo.db.category
     category_count = category.find().count()
-    if (id > category_count or id == 0):
+    if (id == 0 or category.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'category' : 'ERROR'})
     else:
         category.find_one_and_update({'_id' : id}, {'$set' : request.get_json()})
@@ -181,7 +198,7 @@ def edit_category(id):
 def delete_category(id):
     category = mongo.db.category
     category_count = category.find().count()
-    if (id > category_count or id == 0):
+    if (id == 0 or category.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'category' : 'ERROR'})
     else:
         category.remove({'_id' : id})
@@ -217,7 +234,7 @@ def get_all_products():
 def get_one_product(id):
     product = mongo.db.product
     all_products_count = product.find().count()
-    if (id > all_products_count or id == 0):
+    if (id == 0 or product.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'product' : 'ERROR'})
     else:
         product_item = product.find_one({'_id' : id})
@@ -229,7 +246,7 @@ def get_one_product(id):
 def edit_product(id):
     product = mongo.db.product
     all_products = product.find().count()
-    if (id > all_products or id == 0):
+    if (id == 0 or product.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'product' : 'ERROR'})
     else:
         product.find_one_and_update({'_id' : id}, {'$set' : request.get_json()})
@@ -250,7 +267,7 @@ def delete_product(id):
 def edit_items(id):
     cart = mongo.db.cart
     users = mongo.db.users
-    if (id > cart.find().count() or id == 0):
+    if (id == 0 or cart.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'cart' : 'ERROR (cart not found)'})
     elif (users.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'cart' : 'ERROR (cart not found)'})
@@ -266,7 +283,7 @@ def edit_items(id):
 @app.route('/cart/<int:id>', methods=['GET'])
 def get_all_items(id):
     cart = mongo.db.cart
-    if (id > cart.find().count() or id == 0):
+    if (id == 0 or cart.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'cart' : 'ERROR'})
     else:
         user_cart = cart.find_one({'_id' : id})
@@ -295,4 +312,4 @@ def create_admin():
     return result
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
