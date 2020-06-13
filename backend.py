@@ -46,10 +46,7 @@ def send_mail_smtp(recipient, name, link):
 def register():
     users = mongo.db.users
     last_user = users.find().count()
-    data = request.json
-    #if (users.find().sort({'email' : data['email']})):
-    #    result = jsonify({'ERROR' : 'this email already in use'})
-    #else:
+    data = request.get_json()
     data['_id'] = int(last_user) + 1
     data['password'] = bcrypt.generate_password_hash(request.get_json()['password']).decode('utf-8')
     data['created'] = datetime.utcnow()
@@ -57,20 +54,10 @@ def register():
     data['admin'] = False
     data['edited'] = None
     all_users = users.find().count()
-    data = json.dumps(data, default=json_util.default)
-    user_id = users.insert({      
-        '_id' : all_users + 1,
-        'name': data['name'],
-        'email': data['email'],
-        'pjone': data['pyhone'],
-        'password': 'Data[password]',
-        'active' : False,
-        'admin' : False
-
-    })
-
+    user_id = users.insert(data)
+    # SMTP
     new_user = users.find_one({'_id': user_id})
-    link = "192.168.1.2:5000/" + hashlib.md5(new_user['email'].encode())
+    link = "192.168.1.2:5000/user/confirm/" + str(user_id)
     result_smtp = send_mail_smtp(recipient = new_user['email'], name = new_user['name'], link=link)
     result = jsonify({'email': new_user['email'] + ' registered'})
     
@@ -88,12 +75,15 @@ def login():
     if response:
         if bcrypt.check_password_hash(response['password'], password):
             access_token = create_access_token(identity = {
-                'username': response['username'],
+                'name': response['name'],
                 'email': response['email']
             })
-            result = jsonify({"token": access_token})
+            result = jsonify({"token": access_token,
+                              "id" : response['_id'],
+                              "admin" : response['admin'],
+                              "active" : response['active']})
         else:
-            result = jsonify({"error": "Invalid username and password"})
+            result = jsonify({"error": "Invalid name and password"})
     else:
         result = jsonify({"result": "No results found"})
     return result
@@ -114,7 +104,7 @@ def get_all_users():
     return result
 
 @app.route('/user/<int:id>', methods=['PUT'])
-def edit_user():
+def edit_user(id):
     users = mongo.db.users
     data = request.get_json()
     user = users.find_one({'email': data['email']})
@@ -136,9 +126,12 @@ def edit_user():
     return result
 
 @app.route('/user/<int:id>', methods=['DELETE'])
-def delete_user():
+def delete_user(id):
     users = mongo.db.users
     users.remove({'_id' : id})
+    result = jsonify({'user' : 'deleted'})
+
+    return result
 
 # Category
 @app.route('/category', methods=['POST'])
@@ -246,6 +239,7 @@ def get_one_product(id):
 def edit_product(id):
     product = mongo.db.product
     all_products = product.find().count()
+    print(request.get_json())
     if (id == 0 or product.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'product' : 'ERROR'})
     else:
@@ -267,12 +261,14 @@ def delete_product(id):
 def edit_items(id):
     cart = mongo.db.cart
     users = mongo.db.users
-    if (id == 0 or cart.find_one({'_id' : id})['_id'] != id):
-        result = jsonify({'cart' : 'ERROR (cart not found)'})
-    elif (users.find_one({'_id' : id})['_id'] != id):
+    data = {'_id' : id,
+            'UserProducts' : request.get_json()}
+    print(data)
+    if (users.find_one({'_id' : id})['_id'] != id):
         result = jsonify({'cart' : 'ERROR (cart not found)'})
     elif (cart.find_one({'_id' : id}) == None or cart.find_one({'_id' : id}) == 0):
-        cart.insert(request.get_json)
+        data['_id'] = int(id)
+        cart.insert(data)
         result = jsonify({'cart' : 'created'})
     else:
         cart.find_one_and_update({'_id' : id}, {'$set' : request.get_json()})
@@ -283,25 +279,24 @@ def edit_items(id):
 @app.route('/cart/<int:id>', methods=['GET'])
 def get_all_items(id):
     cart = mongo.db.cart
-    if (id == 0 or cart.find_one({'_id' : id})['_id'] != id):
-        result = jsonify({'cart' : 'ERROR'})
-    else:
-        user_cart = cart.find_one({'_id' : id})
-        result = jsonify(user_cart)
+    user_cart = cart.find_one({'_id' : id})
+    result = jsonify(user_cart)
     
     return result
 
-@app.route('/user/confirm/<string:key>', methods=['GET'])
-def smtp_confirm(key):
-    users = mongo.db.users
-    confirm_email = hashlib.md5(key).hexdigest()
-    if (users.find_one({'email' : confirm_email})):
-        cart.find_one_and_update({'email' : confirm_email}, {'$set' : {'active' : True}})
-        result = jsonify({'email' : 'confirmed'})
-    else:
-        result = jsonify({'email' : 'wrong'})
+@app.route('/carts', methods=['GET'])
+def get_all_carts():
+    cart = mongo.db.cart
+    result = jsonify([item for item in cart.find()])
+    
+    return result
 
-    return redirect("http://192.168.1.6:8080/login")
+@app.route('/user/confirm/<int:id>', methods=['GET'])
+def smtp_confirm(id):
+    users = mongo.db.users
+    users.find_one_and_update({'_id' : id}, {'$set' : {'active' : True}})
+    result = jsonify({'email' : 'confirmed'})
+    return redirect("http://192.168.1.7:8080/login")
 
 @app.route('/user/admin', methods=['POST'])
 def create_admin():
